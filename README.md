@@ -6,11 +6,12 @@ traceable to its inputs, reporting period, source, and formula.
 
 ## Current stage
 
-The repository is completing the pure-domain and reporting foundation. It has
-validated period types, exact integer money arithmetic, tested financial
-formulas, a provenance-linked report model, and terminal/Markdown renderers.
-The CLI is still a shell; live data ingestion, SQLite persistence, and wiring
-the report model into `seby analyse` are later work.
+The repository has completed the pure-domain and reporting foundation and is
+building its SQLite persistence layer. It has validated period types, exact
+integer money arithmetic, tested financial formulas, a provenance-linked report
+model, terminal/Markdown renderers, versioned SQLite schema migrations, and an
+atomic fact repository. Live data ingestion and wiring the report model into
+`seby analyse` remain later work.
 
 ## Build and checks
 

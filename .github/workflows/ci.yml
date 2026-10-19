@@ -73,7 +73,15 @@ jobs:
         run: cabal build all --enable-tests --ghc-options="-Wall -Werror"
 
       - name: Run tests
-        run: cabal test all --test-show-details=direct
+        run: cabal test all --enable-coverage --test-show-details=direct
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hpc-coverage-report
+          path: dist-newstyle/build/*/ghc-*/seby-*/t/seby-test/hpc/vanilla/html
+          if-no-files-found: warn
 
       - name: Check dependency plan
         run: cabal build all --dry-run
