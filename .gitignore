@@ -1,0 +1,14 @@
+dist-newstyle/
+.ghc.environment.*
+*.o
+*.hi
+*.hie
+*.dyn_o
+*.dyn_hi
+.stack-work/
+*.sqlite
+*.sqlite3
+*.db
+.DS_Store
+*~
+*.swp

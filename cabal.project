@@ -1,0 +1,5 @@
+packages: .
+with-compiler: ghc-9.14.1
+
+package seby
+  ghc-options: -Wall -Wcompat -Werror

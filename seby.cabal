@@ -1,0 +1,90 @@
+cabal-version:      3.14
+name:               seby
+version:            0.1.0.0
+synopsis:           Local-first fundamental equity analysis tool for Indian listed companies
+description:        Seby is a rigorous, transparent, local-first fundamental analysis tool
+                    for Indian listed equities (NSE/BSE), transforming sourced financial
+                    facts into reproducible analytical reports.
+license:            MIT
+license-file:       LICENSE
+author:             Bombay Boyz
+maintainer:         259497327+Bombay-Boyz@users.noreply.github.com
+category:           Finance
+build-type:         Simple
+
+source-repository head
+    type:     git
+    location: https://github.com/Bombay-Boyz/seby
+
+common warnings
+    ghc-options:
+        -Wall
+        -Wcompat
+        -Wincomplete-uni-patterns
+        -Wincomplete-record-updates
+        -Wmissing-export-lists
+        -Wunused-imports
+        -Wunused-top-binds
+        -Wunused-local-binds
+        -Wunused-matches
+        -Wredundant-constraints
+        -Wpartial-fields
+        -Widentities
+
+library
+    import:           warnings
+    exposed-modules:
+        Seby.Domain.Types
+        Seby.Domain.Money
+        Seby.Domain.Period
+        Seby.Domain.Quality
+        Seby.Metrics
+        Seby.CLI
+        Seby.App
+        Seby.Reporting.Model
+        Seby.Reporting.Format
+        Seby.Reporting.Terminal
+        Seby.Reporting.Markdown
+    build-depends:
+        base >= 4.18 && < 5,
+        text >= 2.0 && < 2.2,
+        bytestring >= 0.11 && < 0.13,
+        containers >= 0.6 && < 0.9,
+        time >= 1.12 && < 1.16,
+        optparse-applicative >= 0.17 && < 0.20
+    hs-source-dirs:   src
+    default-language: GHC2024
+    default-extensions:
+        DerivingStrategies
+        DataKinds
+        GADTs
+        KindSignatures
+        OverloadedStrings
+
+executable seby
+    import:           warnings
+    main-is:          Main.hs
+    build-depends:
+        base >= 4.18 && < 5,
+        seby
+    hs-source-dirs:   app
+    default-language: GHC2024
+
+test-suite seby-test
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    other-modules:
+        Seby.MetricsSpec
+        Seby.DomainSpec
+        Seby.ReportingSpec
+    build-depends:
+        base >= 4.18 && < 5,
+        QuickCheck >= 2.14 && < 2.20,
+        text >= 2.0 && < 2.2,
+        time >= 1.12 && < 1.16,
+        seby
+    hs-source-dirs:   test
+    default-language: GHC2024
+    default-extensions:
+        OverloadedStrings

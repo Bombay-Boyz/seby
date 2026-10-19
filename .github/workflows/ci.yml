@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Quality tools still target older base / ghc-lib-parser versions.
+      - name: Set up quality-tool compiler
+        uses: haskell-actions/setup@f9150cb1d140e9a9271700670baa38991e6fa25c # v2
+        with:
+          ghc-version: '9.8.4'
+          cabal-version: '3.14.1.1'
+
+      - name: Update package index
+        run: cabal update
+
+      - name: Install Fourmolu
+        run: cabal install --ignore-project fourmolu-0.20.1.0 --installdir="$HOME/.local/bin" --overwrite-policy=always
+
+      - name: Install cabal-fmt
+        run: cabal install --ignore-project cabal-fmt-0.1.12 --installdir="$HOME/.local/bin" --overwrite-policy=always
+
+      - name: Install HLint
+        run: cabal install --ignore-project hlint-3.10 --installdir="$HOME/.local/bin" --overwrite-policy=always
+
+      - name: Add quality tools to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Set up project compiler
+        uses: haskell-actions/setup@f9150cb1d140e9a9271700670baa38991e6fa25c # v2
+        with:
+          ghc-version: '9.14.1'
+          cabal-version: '3.14.1.1'
+
+      - name: Cache Cabal packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('**/*.cabal', 'cabal.project', 'cabal.project.freeze') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-9.14.1-
+
+      - name: Check formatting
+        run: |
+          fourmolu --mode check $(rg --files -g '*.hs')
+          cabal-fmt --check seby.cabal
+
+      - name: Lint Haskell sources
+        run: hlint src app test
+
+      - name: Build with warnings as errors
+        run: cabal build all --enable-tests --ghc-options="-Wall -Werror"
+
+      - name: Run tests
+        run: cabal test all --test-show-details=direct
+
+      - name: Check dependency plan
+        run: cabal build all --dry-run
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ci-logs
+          path: |
+            dist-newstyle
+          if-no-files-found: ignore
