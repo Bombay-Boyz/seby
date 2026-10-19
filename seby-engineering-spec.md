@@ -232,21 +232,47 @@ A stale value may be usable if clearly marked and if the report policy permits i
 
 ## 5. Canonical financial model
 
-### 5.1 Strongly typed dimensions
+### 5.1 Strongly typed dimensions & GADT-indexed metrics
 
-Production code SHOULD represent the following with dedicated types or well-defined newtypes:
+Production code MUST represent all financial values with dedicated types or newtypes rather than bare primitive numbers (`Double` or `Int`). To make dimensional mixing a compile-time impossibility, financial metrics and pipeline stages are indexed using GADTs and closed ADTs:
 
-- Currency and monetary amount.
-- Share count and per-share amount.
-- Ratio, percentage, and multiple.
-- Fiscal period and period type.
-- Consolidation scope.
-- Statement basis.
-- Source and provenance.
-- Observation quality/status.
-- Company, security, and segment identity.
+```haskell
+-- | Dimension tag types
+data Days = Days Integer deriving (Eq, Ord, Show)
 
-Do not use bare `Double` for all financial quantities. Dimensional distinctions must be preserved until an explicit conversion or formula combines them.
+-- | GADT indexing each supported financial metric by its exact return dimension.
+-- Prevents dimension mismatches (e.g. adding Rate to Money, or Multiple to Days) at compile time.
+data Metric a where
+  Revenue           :: Metric Money
+  OperatingProfit   :: Metric Money
+  NetProfit         :: Metric Money
+  OperatingCashFlow :: Metric Money
+  CapitalExpenditure:: Metric Money
+  FreeCashFlow      :: Metric Money
+  GrossMargin       :: Metric Rate
+  OperatingMargin   :: Metric Rate
+  NetMargin         :: Metric Rate
+  ReturnOnEquity    :: Metric Rate
+  ReturnOnCapital   :: Metric Rate
+  PriceToEarnings   :: Metric Multiple
+  PriceToBook       :: Metric Multiple
+  EVToEBITDA        :: Metric Multiple
+  DebtToEquity      :: Metric Multiple
+  DaysSalesOut      :: Metric Days
+  DaysInventoryOut  :: Metric Days
+  CashConversionCyc :: Metric Days
+
+-- | Staged verification tags
+data Stage = Raw | Validated | Normalised
+
+-- | GADT ensuring that only Normalised facts can enter pure financial formulas.
+data Fact (s :: Stage) a where
+  RawFact        :: RawPayload -> Fact 'Raw RawObservation
+  ValidatedFact  :: ValidatedData -> NonEmpty Provenance -> Fact 'Validated CanonicalObservation
+  NormalisedFact :: a -> NonEmpty Provenance -> Fact 'Normalised a
+```
+
+Dimensional distinctions must be preserved until an explicit conversion or formula combines them. Standard statement items MUST use fixed-point `Decimal` or discrete `Money` units (e.g. `Money "INR"`), reserving floating-point numbers strictly for non-linear valuation discounting.
 
 ### 5.2 Missing and invalid data
 
@@ -411,16 +437,15 @@ Sort collections deterministically. Do not depend on network response order, has
 
 ### 7.1 Compiler and project management
 
-- Use a pinned GHC version and a reproducible build plan, via a maintained Cabal or Stack workflow.
-- Commit the package manifest and the chosen lock/resolution artefact where applicable.
-- Pin CI toolchain versions; upgrades occur through explicit change sets.
-- Compile with `-Wall` and a reviewed set of additional warnings.
-- Enable warnings for incomplete patterns and incomplete record updates.
-- Treat project warnings as errors in CI after the initial warning baseline is clean.
-- Keep compiler extensions minimal, documented, and local where practical.
-- Do not add language extensions merely to shorten code.
+- The project MUST target **GHC 9.14 (LTS series)** as its primary compiler, using **Cabal 3.14+** for build management.
+- Standard language edition: `GHC2024` with explicit local extensions where required (`GADTs`, `DataKinds`, `DerivingStrategies`, `OverloadedStrings`).
+- Commit the package manifest (`seby.cabal`) and `cabal.project.freeze` lockfile to ensure bit-for-bit reproducible builds.
+- Pin CI toolchain versions (`ghc-version: '9.14.1'`, `cabal-version: '3.14.1.1'`).
+- Compile with `-Wall -Wcompat -Werror` and treat warnings as errors in CI.
+- Take advantage of GHC 9.14 built-in warnings: `-Wincomplete-uni-patterns`, `-Wincomplete-record-updates`, and `-Wincomplete-record-selectors` are included in `-Wall`.
+- Keep compiler extensions minimal, documented, and local where practical. Do not add language extensions merely to shorten code.
 
-The project MUST select one primary build workflow rather than maintain two competing workflows without a concrete need.
+The project MUST select Cabal as the single primary build workflow rather than maintain two competing workflows without a concrete need.
 
 ### 7.2 Type design
 
@@ -1108,8 +1133,8 @@ jobs:
       - name: Set up GHC and Cabal
         uses: haskell-actions/setup@v2
         with:
-          ghc-version: 'PINNED_GHC_VERSION'
-          cabal-version: 'PINNED_CABAL_VERSION'
+          ghc-version: '9.14.1'
+          cabal-version: '3.14.1.1'
 
       - name: Cache Cabal packages
         uses: actions/cache@v4
@@ -1117,9 +1142,9 @@ jobs:
           path: |
             ~/.cabal/store
             dist-newstyle
-          key: ${{ runner.os }}-ghc-PINNED_GHC_VERSION-${{ hashFiles('**/*.cabal', 'cabal.project', 'cabal.project.freeze') }}
+          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('**/*.cabal', 'cabal.project', 'cabal.project.freeze') }}
           restore-keys: |
-            ${{ runner.os }}-ghc-PINNED_GHC_VERSION-
+            ${{ runner.os }}-ghc-9.14.1-
 
       - name: Update package index
         run: cabal update
