@@ -11,6 +11,10 @@ own licence and copyright notices continue to apply when redistributed.
 | `text` | `>= 2.0 && < 2.2` | Text values and rendering | BSD-2-Clause | [haskell/text](https://github.com/haskell/text) |
 | `bytestring` | `>= 0.11 && < 0.13` | Binary source payloads | BSD-3-Clause | [haskell/bytestring](https://github.com/haskell/bytestring) |
 | `containers` | `>= 0.6 && < 0.9` | Ordered collection types | BSD-3-Clause | [haskell/containers](https://github.com/haskell/containers) |
+| `aeson` | `>= 2.1 && < 2.4` | Decode Alpha Vantage JSON responses | BSD-3-Clause | [haskell/aeson](https://github.com/haskell/aeson) |
+| `http-client` | `>= 0.7 && < 0.8` | HTTPS requests with explicit response timeout | MIT | [snoyberg/http-client](https://github.com/snoyberg/http-client) |
+| `http-client-tls` | `>= 0.3 && < 0.4` | TLS backend for HTTP requests | MIT | [snoyberg/http-client](https://github.com/snoyberg/http-client) |
+| `http-types` | `>= 0.12 && < 0.13` | HTTP query construction and status handling | BSD-3-Clause | [aristidb/http-types](https://github.com/aristidb/http-types) |
 | `time` | `>= 1.12 && < 1.16` | Calendar and timestamp types | BSD-2-Clause | [haskell/time](https://github.com/haskell/time) |
 | `optparse-applicative` | `>= 0.17 && < 0.20` | Typed command-line parsing | BSD-3-Clause | [pcapriotti/optparse-applicative](https://github.com/pcapriotti/optparse-applicative) |
 | `QuickCheck` | `>= 2.14 && < 2.20` | Generated property testing | BSD-3-Clause | [nick8325/quickcheck](https://github.com/nick8325/quickcheck) |

@@ -6,12 +6,15 @@ traceable to its inputs, reporting period, source, and formula.
 
 ## Current stage
 
-The repository has completed the pure-domain and reporting foundation and is
-building its SQLite persistence layer. It has validated period types, exact
-integer money arithmetic, tested financial formulas, a provenance-linked report
-model, terminal/Markdown renderers, versioned SQLite schema migrations, and an
-atomic fact repository. Live data ingestion and wiring the report model into
-`seby analyse` remain later work.
+The repository now includes the pure-domain, reporting, SQLite persistence,
+peer-analysis, and first market-price ingestion foundations. It has validated
+period and money types, tested financial formulas, a provenance-linked report
+model, versioned SQLite migrations, and atomic payload persistence. The
+Alpha Vantage adapter uses the documented free compact daily endpoint for raw,
+unadjusted prices (latest 100 observations per request); adjusted history and
+company fundamentals are outside the free endpoint scope. The API key is
+supplied by the caller and is excluded from stored provenance. Wiring a full
+company analysis report into `seby analyse` remains later work.
 
 ## Build and checks
 
