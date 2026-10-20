@@ -287,6 +287,7 @@ dailyPriceRefreshBatch runId company fetched =
   RefreshBatch
     { refreshRunId = runId
     , refreshCompany = company
+    , refreshCompanyName = ""
     , refreshAttemptedAt = fetchedAttemptedAt fetched
     , refreshCompletedAt = provenanceRetrievedAt provenance
     , refreshPayload = RawPayload provenance (fetchedPayload fetched)

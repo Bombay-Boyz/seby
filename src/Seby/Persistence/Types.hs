@@ -65,6 +65,7 @@ data CanonicalFact = CanonicalFact
 data RefreshBatch = RefreshBatch
   { refreshRunId :: !Text
   , refreshCompany :: !CompanyId
+  , refreshCompanyName :: !Text
   , refreshAttemptedAt :: !UTCTime
   , refreshCompletedAt :: !UTCTime
   , refreshPayload :: !RawPayload
@@ -103,6 +104,7 @@ data StoreError
   | InvalidStoredValue !Text
   | InvalidRefreshBatch !Text
   | UnsupportedSchemaVersion !Int
+  | InvalidWatchlistSymbol !Text
   deriving stock (Eq, Show)
 
 -- | Explicit caller choice for cache-first, refresh-first, and offline use.

@@ -17,6 +17,7 @@ import Control.Monad (forM_, when)
 import Crypto.Hash (Digest, SHA256, hash)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
+import Data.Char (isSpace)
 import Data.Ratio (Ratio, denominator, numerator, (%))
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -30,13 +31,14 @@ import Seby.Domain.Types (
   Provenance (..),
   SourceId (..),
   StatementBasis (..),
+  Symbol (..),
   unCompanyId,
  )
 import Seby.Persistence.Repository (FactRepository (..))
 import Seby.Persistence.Types
 
 currentSchemaVersion :: Int
-currentSchemaVersion = 1
+currentSchemaVersion = 2
 
 -- | Upper bound for a source payload persisted by a single refresh batch.
 maxPayloadBytes :: Int
@@ -137,8 +139,15 @@ openFactRepository path = do
           , recordRefreshFailure = recordFailure connection
           , loadCanonicalFacts = loadFacts connection
           , loadCanonicalFactHistory = loadFactHistory connection
+          , loadCurrentCompanyFacts = loadCurrentFacts connection
+          , loadCompanyName = getCompanyName connection
           , persistCorporateActions = saveActions connection
           , loadCorporateActions = loadActions connection
+          , addWatchlistSymbol = addWatchlist connection
+          , removeWatchlistSymbol = removeWatchlist connection
+          , loadWatchlist = loadWatchlistSymbols connection
+          , checkDatabaseIntegrity = checkIntegrity connection
+          , vacuumDatabase = vacuum connection
           , getRefreshState = refreshState connection
           }
 
@@ -168,7 +177,16 @@ migrate conn = do
         mapM_ (execute_ conn) schemaV1
         now <- formatUtc <$> getCurrentTime
         execute conn "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)" (Only now)
+      when (maxVersion < 2) $ withTransaction conn $ do
+        mapM_ (execute_ conn) schemaV2
+        now <- formatUtc <$> getCurrentTime
+        execute conn "INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)" (Only now)
       pure (Right ())
+
+schemaV2 :: [Query]
+schemaV2 =
+  [ "CREATE TABLE watchlist (symbol TEXT PRIMARY KEY CHECK(length(trim(symbol)) > 0), added_at TEXT NOT NULL)"
+  ]
 
 schemaV1 :: [Query]
 schemaV1 =
@@ -217,8 +235,8 @@ persistBatch conn batch provenance actualDigest = do
       (source, source)
     execute
       conn
-      "INSERT INTO company(company_id) VALUES (?) ON CONFLICT(company_id) DO NOTHING"
-      (Only company)
+      "INSERT INTO company(company_id, name) VALUES (?, ?) ON CONFLICT(company_id) DO UPDATE SET name = excluded.name WHERE length(trim(excluded.name)) > 0"
+      (company, refreshCompanyName batch)
     execute
       conn
       "INSERT INTO raw_payload(source_id, digest, uri, retrieved_at, published_at, body) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(source_id, digest) DO NOTHING"
@@ -346,6 +364,47 @@ recordFailure conn failure
         (failedRunId failure, company, source, formatUtc (failedAt failure), failureReason failure)
       pure (Right ())
 
+addWatchlist :: Connection -> Symbol -> IO (Either StoreError ())
+addWatchlist conn (Symbol rawSymbol) = case normalizeWatchlistSymbol rawSymbol of
+  Left errorValue -> pure (Left errorValue)
+  Right symbol -> runDatabase $ do
+    now <- formatUtc <$> getCurrentTime
+    execute
+      conn
+      "INSERT INTO watchlist(symbol, added_at) VALUES (?, ?) ON CONFLICT(symbol) DO NOTHING"
+      (symbol, now)
+    pure (Right ())
+
+removeWatchlist :: Connection -> Symbol -> IO (Either StoreError ())
+removeWatchlist conn (Symbol rawSymbol) = case normalizeWatchlistSymbol rawSymbol of
+  Left errorValue -> pure (Left errorValue)
+  Right symbol -> runDatabase $ do
+    execute conn "DELETE FROM watchlist WHERE symbol = ?" (Only symbol)
+    pure (Right ())
+
+loadWatchlistSymbols :: Connection -> IO (Either StoreError [Symbol])
+loadWatchlistSymbols conn = runDatabase $ do
+  rows <- query_ conn "SELECT symbol FROM watchlist ORDER BY symbol" :: IO [Only Text]
+  pure (Right [Symbol symbol | Only symbol <- rows])
+
+normalizeWatchlistSymbol :: Text -> Either StoreError Text
+normalizeWatchlistSymbol rawSymbol
+  | Text.null normalized = Left (InvalidWatchlistSymbol rawSymbol)
+  | Text.any isSpace normalized = Left (InvalidWatchlistSymbol rawSymbol)
+  | otherwise = Right normalized
+  where
+    normalized = Text.toUpper (Text.strip rawSymbol)
+
+checkIntegrity :: Connection -> IO (Either StoreError ())
+checkIntegrity conn = runDatabase $ do
+  rows <- query_ conn "PRAGMA integrity_check" :: IO [Only Text]
+  pure $ if rows == [Only "ok"] then Right () else Left (DatabaseFailure (Text.pack (show rows)))
+
+vacuum :: Connection -> IO (Either StoreError ())
+vacuum conn = runDatabase $ do
+  execute_ conn "VACUUM"
+  pure (Right ())
+
 loadFacts :: Connection -> CompanyId -> FactPeriod -> IO (Either StoreError [CanonicalFact])
 loadFacts conn (CompanyId company) period = runDatabase $ do
   rows <-
@@ -373,6 +432,23 @@ loadFactHistory conn (CompanyId company) period = runDatabase $ do
       ) ::
       IO [StoredFact]
   pure (traverse (decodeStoredFact company) rows)
+
+loadCurrentFacts :: Connection -> CompanyId -> IO (Either StoreError [CanonicalFact])
+loadCurrentFacts conn (CompanyId company) = runDatabase $ do
+  rows <-
+    query
+      conn
+      "SELECT f.concept, f.period_start, f.period_end, f.period_type, f.currency, f.amount_minor, f.statement_basis, f.scope, f.policy_version, p.source_id, f.provenance_uri, f.observed_at, f.published_at, f.payload_digest FROM canonical_fact f JOIN raw_payload p ON p.source_id = f.source_id AND p.digest = f.payload_digest WHERE f.company_id = ? AND f.fact_id = (SELECT f2.fact_id FROM canonical_fact f2 WHERE f2.company_id = f.company_id AND f2.concept = f.concept AND f2.period_start = f.period_start AND f2.period_end = f.period_end AND f2.period_type = f.period_type AND f2.currency = f.currency AND f2.statement_basis = f.statement_basis AND f2.scope = f.scope AND f2.source_id = f.source_id ORDER BY julianday(COALESCE(f2.published_at, f2.observed_at)) DESC, f2.fact_id DESC LIMIT 1) ORDER BY f.concept, f.period_end, f.statement_basis, f.scope, p.source_id"
+      (Only company) ::
+      IO [StoredFact]
+  pure (traverse (decodeStoredFact company) rows)
+
+getCompanyName :: Connection -> CompanyId -> IO (Either StoreError (Maybe Text))
+getCompanyName conn (CompanyId company) = runDatabase $ do
+  rows <- query conn "SELECT name FROM company WHERE company_id = ?" (Only company) :: IO [Only Text]
+  pure $ case rows of
+    [] -> Right Nothing
+    Only name : _ -> Right (if Text.null (Text.strip name) then Nothing else Just name)
 
 saveActions :: Connection -> [CorporateAction] -> IO (Either StoreError ())
 saveActions conn actions

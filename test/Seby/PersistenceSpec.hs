@@ -3,14 +3,14 @@
 module Seby.PersistenceSpec (runTests) where
 
 import Control.Exception (bracket)
-import Control.Monad (when)
+import Control.Monad (when, (>=>))
 import Data.ByteString.Char8 qualified as ByteString
 import Data.Ratio ((%))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.Time.Clock (addUTCTime)
-import Database.SQLite.Simple (Only (..), close, execute_, open, query, query_)
+import Database.SQLite.Simple (Only (..), close, execute, execute_, open, query, query_)
 import Seby.Analysis.CorporateActions (CorporateActionType (..), mkCorporateAction)
 import Seby.Analysis.FactViews (FactView (..), selectFactView)
 import Seby.Domain.Money (Currency (..))
@@ -20,6 +20,7 @@ import Seby.Domain.Types (
   Provenance (..),
   SourceId (..),
   StatementBasis (..),
+  Symbol (..),
  )
 import Seby.Persistence.Repository
 import Seby.Persistence.SQLite
@@ -32,7 +33,9 @@ runTests = do
   testSha256
   testCacheDecisionTable
   withFreshDatabase testFutureSchemaRejected
+  withFreshDatabase testV1ToV2Migration
   withFreshDatabase testRepositoryRoundTrip
+  withFreshDatabase testWatchlistStress
   putStrLn "✓ Phase 2 persistence integration and boundary tests passed."
 
 testSha256 :: IO ()
@@ -101,11 +104,42 @@ testFutureSchemaRejected path = do
       Left (UnsupportedSchemaVersion 99) -> True
       _ -> False
 
+testV1ToV2Migration :: FilePath -> IO ()
+testV1ToV2Migration path = do
+  connection <- open path
+  execute_
+    connection
+    "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+  execute
+    connection
+    "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)"
+    (Only ("2025-01-01T00:00:00Z" :: Text))
+  close connection
+  opened <- openFactRepository path
+  repository <- expectRight "migrate v1 database to v2" opened
+  addWatchlistSymbol repository (Symbol "INFY") >>= expectRight "use watchlist after migration"
+  assertEqual "v1 data model migrates to v2" [Symbol "INFY"]
+    =<< (loadWatchlist repository >>= expectRight "load migrated watchlist")
+  closeFactRepository repository
+
+testWatchlistStress :: FilePath -> IO ()
+testWatchlistStress path = do
+  opened <- openFactRepository path
+  repository <- expectRight "open repository for watchlist stress" opened
+  let symbols = [Symbol ("TICKER" <> Text.pack (show number)) | number <- [1 .. 500 :: Int]]
+  mapM_ (addWatchlistSymbol repository >=> expectRight "persist stress watchlist item") symbols
+  mapM_ (addWatchlistSymbol repository >=> expectRight "idempotent stress watchlist replay") symbols
+  loaded <- loadWatchlist repository >>= expectRight "reload stress watchlist"
+  assertEqual "large watchlist remains deduplicated and sorted" (length symbols) (length loaded)
+  assertEqual "large watchlist starts in symbol order" (take 1 symbols) (take 1 loaded)
+  checkDatabaseIntegrity repository >>= expectRight "check stressed database integrity"
+  closeFactRepository repository
+
 testRepositoryRoundTrip :: FilePath -> IO ()
 testRepositoryRoundTrip path = do
   opened <- openFactRepository path
-  repository <- expectRight "open and migrate schema v1" opened
-  assertEqual "schema version" 1 currentSchemaVersion
+  repository <- expectRight "open and migrate current schema" opened
+  assertEqual "schema version" 2 currentSchemaVersion
   let first = makeBatch "run-1" "original filing payload" (10 ^ (30 :: Int)) (timestamp 2025 4 1)
       reprocessed =
         first
@@ -137,6 +171,26 @@ testRepositoryRoundTrip path = do
   assert "canonical fact index serves the cache lookup" $
     any (Text.isInfixOf "canonical_fact_lookup" . fourthColumn) queryPlan
   storeRefreshBatch repository first >>= expectRight "store initial refresh atomically"
+  assertEqual "company display name is persisted with facts" (Just "Test Company")
+    =<< (loadCompanyName repository company >>= expectRight "load company display name")
+  currentCompanyFacts <-
+    loadCurrentCompanyFacts repository company >>= expectRight "load current facts across all periods"
+  assertEqual
+    "current-company fact lookup returns persisted facts"
+    [10 ^ (30 :: Int)]
+    (map canonicalAmountMinor currentCompanyFacts)
+  addWatchlistSymbol repository (Symbol " tcs ") >>= expectRight "add normalized watchlist symbol"
+  addWatchlistSymbol repository (Symbol "TCS") >>= expectRight "adding watchlist symbol is idempotent"
+  assertEqual "watchlist normalizes and deduplicates symbols" [Symbol "TCS"]
+    =<< (loadWatchlist repository >>= expectRight "load watchlist")
+  removeWatchlistSymbol repository (Symbol "tcs")
+    >>= expectRight "remove watchlist symbol case-insensitively"
+  assertEqual "watchlist removal is idempotent" []
+    =<< (loadWatchlist repository >>= expectRight "load empty watchlist")
+  assertEqual "invalid whitespace ticker is rejected" (Left (InvalidWatchlistSymbol "bad ticker"))
+    =<< addWatchlistSymbol repository (Symbol "bad ticker")
+  checkDatabaseIntegrity repository >>= expectRight "check SQLite integrity"
+  vacuumDatabase repository >>= expectRight "vacuum SQLite database"
   action <-
     expectRight
       "construct persisted split action"
@@ -322,6 +376,7 @@ makeBatch runId bytes amount retrievedAt =
    in RefreshBatch
         { refreshRunId = runId
         , refreshCompany = company
+        , refreshCompanyName = "Test Company"
         , refreshAttemptedAt = retrievedAt
         , refreshCompletedAt = retrievedAt
         , refreshPayload = RawPayload provenance bytes

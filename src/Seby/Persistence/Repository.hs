@@ -7,8 +7,9 @@ module Seby.Persistence.Repository (
   FactRepository (..),
 ) where
 
+import Data.Text (Text)
 import Seby.Analysis.CorporateActions (CorporateAction)
-import Seby.Domain.Types (CompanyId)
+import Seby.Domain.Types (CompanyId, Symbol)
 import Seby.Persistence.Types
 
 data FactRepository = FactRepository
@@ -17,7 +18,14 @@ data FactRepository = FactRepository
   , recordRefreshFailure :: RefreshFailure -> IO (Either StoreError ())
   , loadCanonicalFacts :: CompanyId -> FactPeriod -> IO (Either StoreError [CanonicalFact])
   , loadCanonicalFactHistory :: CompanyId -> FactPeriod -> IO (Either StoreError [CanonicalFact])
+  , loadCurrentCompanyFacts :: CompanyId -> IO (Either StoreError [CanonicalFact])
+  , loadCompanyName :: CompanyId -> IO (Either StoreError (Maybe Text))
   , persistCorporateActions :: [CorporateAction] -> IO (Either StoreError ())
   , loadCorporateActions :: CompanyId -> IO (Either StoreError [CorporateAction])
+  , addWatchlistSymbol :: Symbol -> IO (Either StoreError ())
+  , removeWatchlistSymbol :: Symbol -> IO (Either StoreError ())
+  , loadWatchlist :: IO (Either StoreError [Symbol])
+  , checkDatabaseIntegrity :: IO (Either StoreError ())
+  , vacuumDatabase :: IO (Either StoreError ())
   , getRefreshState :: CompanyId -> IO (Either StoreError (Maybe RefreshState))
   }

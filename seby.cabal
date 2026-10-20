@@ -45,8 +45,11 @@ library
         Seby.Analysis.Segments
         Seby.Analysis.Forensics
         Seby.Analysis.FactViews
+        Seby.Analysis.ReportBuilder
         Seby.Market.Prices
         Seby.Ingestion.AlphaVantage
+        Seby.Ingestion.LocalStatements
+        Seby.Ingestion.FundamentalProviders
         Seby.CLI
         Seby.App
         Seby.Reporting.Model
@@ -68,7 +71,8 @@ library
         http-types >= 0.12 && < 0.13,
         time >= 1.12 && < 1.16,
         optparse-applicative >= 0.17 && < 0.20,
-        sqlite-simple >= 0.4.19 && < 0.5
+        sqlite-simple >= 0.4.19 && < 0.5,
+        scientific >= 0.3 && < 0.4
     hs-source-dirs:   src
     default-language: GHC2024
     default-extensions:
@@ -100,6 +104,8 @@ test-suite seby-test
         Seby.PeersSpec
         Seby.ValuationSpec
         Seby.Phase6Spec
+        Seby.Phase7Spec
+        Seby.FmpSpec
     build-depends:
         base >= 4.18 && < 5,
         QuickCheck >= 2.14 && < 2.20,

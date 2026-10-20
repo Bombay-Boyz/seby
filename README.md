@@ -21,8 +21,15 @@ solve for implied terminal growth. The Alpha Vantage adapter uses the
 documented free compact daily endpoint for raw, unadjusted prices (latest 100
 observations per request); adjusted history and company fundamentals are
 outside the free endpoint scope. The API key is supplied by the caller and is
-excluded from stored provenance. Wiring sourced financial statements and
-analysis into the end-to-end `seby analyse` report remains later work.
+excluded from stored provenance. Statement refresh supports explicit ordered
+FMP and Alpha Vantage attempts, with a separate provider symbol for each
+source. The source is selected by the user; failed attempts are printed when a
+later source succeeds, and all-source failure exits with the reasons. API
+coverage and data basis depend on each provider's plan and ticker availability.
+Seby does not fetch or scrape exchange pages. Reports include source URLs and payload digests, raw
+supported metrics, and compatible derived metrics such as free cash flow and
+margins. Conflicting source values are shown separately and reported as a
+data issue; derived metrics are omitted when their inputs are ambiguous.
 
 ## Build and checks
 
@@ -40,3 +47,82 @@ cabal check
 Read [the project vision](seby-project-vision.md), [the engineering
 specification](seby-engineering-spec.md), and [the Haskell engineering
 standard](haskell-engineering-standard.md) before extending the system.
+
+## Local workflow
+
+The local SQLite database defaults to `seby.sqlite` in the current directory.
+Manage a ticker watchlist and maintain the database with:
+
+```sh
+seby watchlist add TCS
+seby watchlist list
+seby watchlist remove TCS
+seby db check
+seby db vacuum
+```
+
+Watchlist tickers are normalized to uppercase and duplicate additions are
+idempotent. `db check` runs SQLite's integrity check; `db vacuum` reclaims
+unused database pages. Batch analysis uses the saved watchlist, prints every
+successful report, and exits unsuccessfully if any ticker has no usable data
+or encounters an error.
+
+### Import sourced financial statements
+
+Prepare a JSON file from an allowed filing source and retain the filing URL.
+Imports are stored locally with the exact payload digest and source
+publication time. Amounts are integer minor currency units (for example,
+₹1,234.56 is `123456` paise). Supported concepts include `revenue`,
+`operating_profit`, `net_profit`, `operating_cash_flow`,
+`capital_expenditure`, and `gross_profit` (used to calculate gross margin).
+
+```json
+{
+  "symbol": "TCS",
+  "company_name": "Tata Consultancy Services",
+  "source_id": "COMPANY_FILINGS",
+  "source_uri": "https://example.org/filing.pdf",
+  "published_at": "2026-05-01T00:00:00Z",
+  "facts": [
+    {
+      "concept": "revenue",
+      "period_start": "2025-04-01",
+      "period_end": "2026-03-31",
+      "period_type": "annual",
+      "currency": "INR",
+      "amount_minor": 123456,
+      "basis": "consolidated",
+      "scope": "group"
+    }
+  ]
+}
+```
+
+Then run:
+
+```sh
+seby facts import tcs-fy2026.json
+seby analyse TCS --basis consolidated --scope group
+seby analyse --watchlist --basis consolidated --scope group
+```
+
+Statement APIs can be selected in a user-defined order. The first `--source`
+is primary; later sources are tried only when an earlier one fails. Keys are
+read from the process environment and never stored or printed. For example:
+
+```sh
+seby facts refresh TCS --source fmp:TCS.NS --source alpha-vantage:TCS.BSE
+seby analyse TCS --basis consolidated --scope group
+```
+
+Set `SEBY_FMP_API_KEY` and/or `SEBY_ALPHA_VANTAGE_API_KEY` for the sources you
+select. FMP Basic does not provide confirmed Indian financial statement
+coverage; check your plan and ticker availability. Alpha Vantage's free quota
+is limited and its global fundamentals coverage for a given Indian listing
+must be confirmed by the provider. Both adapters retain the original payload;
+their standard endpoints do not reliably label standalone versus consolidated,
+so refresh records the basis assumption and prints a warning. Verify the basis
+before relying on it. The refresh command never stores or prints an API key.
+
+The importer validates the entire document before writing anything. Failed
+imports and incomplete analyses exit nonzero with an error on stderr.
