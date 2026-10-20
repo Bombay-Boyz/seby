@@ -5,11 +5,14 @@ module Seby.PersistenceSpec (runTests) where
 import Control.Exception (bracket)
 import Control.Monad (when)
 import Data.ByteString.Char8 qualified as ByteString
+import Data.Ratio ((%))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.Time.Clock (addUTCTime)
 import Database.SQLite.Simple (Only (..), close, execute_, open, query, query_)
+import Seby.Analysis.CorporateActions (CorporateActionType (..), mkCorporateAction)
+import Seby.Analysis.FactViews (FactView (..), selectFactView)
 import Seby.Domain.Money (Currency (..))
 import Seby.Domain.Types (
   CompanyId (..),
@@ -134,6 +137,20 @@ testRepositoryRoundTrip path = do
   assert "canonical fact index serves the cache lookup" $
     any (Text.isInfixOf "canonical_fact_lookup" . fourthColumn) queryPlan
   storeRefreshBatch repository first >>= expectRight "store initial refresh atomically"
+  action <-
+    expectRight
+      "construct persisted split action"
+      ( mkCorporateAction
+          "split-2-for-1"
+          company
+          (fromGregorian 2025 7 1)
+          (ShareSplit (2 % 1))
+          (rawPayloadProvenance (refreshPayload first))
+      )
+  persistCorporateActions repository [action] >>= expectRight "persist corporate-action ledger"
+  loadedActions <-
+    loadCorporateActions repository company >>= expectRight "reload corporate-action ledger"
+  assertEqual "corporate-action ledger round trips" [action] loadedActions
   storeRefreshBatch repository (first{refreshRunId = "run-1-replay"})
     >>= expectRight "replay identical payload idempotently"
   storeRefreshBatch repository reprocessed
@@ -157,6 +174,24 @@ testRepositoryRoundTrip path = do
   latestFacts <-
     loadCanonicalFacts repository company period >>= expectRight "load latest version of fact"
   assertEqual "latest fact is selected after a correction" [42] (map canonicalAmountMinor latestFacts)
+  factHistory <-
+    loadCanonicalFactHistory repository company period >>= expectRight "load immutable fact history"
+  assertEqual
+    "fact history retains both policy and source versions"
+    [10 ^ (30 :: Int), 10 ^ (30 :: Int), 42]
+    (map canonicalAmountMinor factHistory)
+  assertEqual
+    "reported view selects the first published value"
+    [10 ^ (30 :: Int)]
+    (map canonicalAmountMinor (selectFactView AsReportedFacts factHistory))
+  assertEqual
+    "restated view selects the latest published value"
+    [42]
+    (map canonicalAmountMinor (selectFactView RestatedFacts factHistory))
+  assertEqual
+    "point-in-time view selects the latest version known by the cutoff"
+    [10 ^ (30 :: Int)]
+    (map canonicalAmountMinor (selectFactView (FactsKnownAt (timestamp 2025 3 31)) factHistory))
   latestFact <- onlyFact "one source fact is available after correction" latestFacts
   assertEqual
     "latest value retains new source digest"

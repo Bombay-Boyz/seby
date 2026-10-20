@@ -27,6 +27,7 @@ import Seby.Reporting.Model (
   reportDate,
   reportIssues,
   reportMetrics,
+  reportPhase6Notes,
  )
 
 -- | Render the shared report model as Markdown; no calculations occur here.
@@ -46,6 +47,7 @@ renderMarkdown report =
       , "| --- | --- | --- | --- |"
       ]
         <> fmap renderMetric (reportMetrics report)
+        <> phase6Lines (reportPhase6Notes report)
         <> issueLines (reportIssues report)
     )
   where
@@ -64,6 +66,14 @@ renderMetric metric =
     <> " | "
     <> escapeMarkdown (observationSources metric)
     <> " |"
+
+phase6Lines :: [Text] -> [Text]
+phase6Lines [] = []
+phase6Lines notes =
+  ""
+    : "## Corporate actions, segments, and review signals"
+    : ""
+    : fmap ("- " <>) (escapeMarkdown <$> notes)
 
 issueLines :: [DataIssue] -> [Text]
 issueLines [] = []

@@ -10,11 +10,13 @@ module Seby.Reporting.Model (
   companyName,
   Report,
   mkReport,
+  mkReportWithPhase6Notes,
   reportCompany,
   reportDate,
   reportBasis,
   reportMetrics,
   reportIssues,
+  reportPhase6Notes,
   MetricObservation (..),
 ) where
 
@@ -58,7 +60,7 @@ data MetricObservation where
   MetricObservation :: Metric a -> a -> FiscalPeriod -> NonEmpty Provenance -> MetricObservation
 
 -- | One immutable, render-ready report snapshot.
-data Report = Report !CompanyIdentity !Day !StatementBasis ![MetricObservation] ![DataIssue]
+data Report = Report !CompanyIdentity !Day !StatementBasis ![MetricObservation] ![DataIssue] ![Text]
 
 mkReport ::
   CompanyIdentity ->
@@ -67,19 +69,27 @@ mkReport ::
   [MetricObservation] ->
   [DataIssue] ->
   Report
-mkReport = Report
+mkReport identity date basis observations issues = Report identity date basis observations issues []
+
+-- | Attach already-calculated, evidence-bearing Phase 6 notes to a report.
+mkReportWithPhase6Notes ::
+  CompanyIdentity -> Day -> StatementBasis -> [MetricObservation] -> [DataIssue] -> [Text] -> Report
+mkReportWithPhase6Notes = Report
 
 reportCompany :: Report -> CompanyIdentity
-reportCompany (Report identity _ _ _ _) = identity
+reportCompany (Report identity _ _ _ _ _) = identity
 
 reportDate :: Report -> Day
-reportDate (Report _ date _ _ _) = date
+reportDate (Report _ date _ _ _ _) = date
 
 reportBasis :: Report -> StatementBasis
-reportBasis (Report _ _ basis _ _) = basis
+reportBasis (Report _ _ basis _ _ _) = basis
 
 reportMetrics :: Report -> [MetricObservation]
-reportMetrics (Report _ _ _ observations _) = observations
+reportMetrics (Report _ _ _ observations _ _) = observations
 
 reportIssues :: Report -> [DataIssue]
-reportIssues (Report _ _ _ _ issues) = issues
+reportIssues (Report _ _ _ _ issues _) = issues
+
+reportPhase6Notes :: Report -> [Text]
+reportPhase6Notes (Report _ _ _ _ _ notes) = notes

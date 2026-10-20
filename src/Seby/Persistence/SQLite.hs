@@ -17,10 +17,12 @@ import Control.Monad (forM_, when)
 import Crypto.Hash (Digest, SHA256, hash)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
+import Data.Ratio (Ratio, denominator, numerator, (%))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (Day, UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
 import Database.SQLite.Simple
+import Seby.Analysis.CorporateActions
 import Seby.Domain.Money (Currency (..))
 import Seby.Domain.Types (
   CompanyId (..),
@@ -28,6 +30,7 @@ import Seby.Domain.Types (
   Provenance (..),
   SourceId (..),
   StatementBasis (..),
+  unCompanyId,
  )
 import Seby.Persistence.Repository (FactRepository (..))
 import Seby.Persistence.Types
@@ -55,6 +58,9 @@ data StoredFact
       !Text
       !(Maybe Text)
       !Text
+
+data StoredAction
+  = StoredAction !Text !Text !Text !Text !Text !Text !(Maybe Text) !Text !(Maybe Text) !Text
 
 data CanonicalInsert
   = CanonicalInsert
@@ -96,6 +102,20 @@ instance FromRow StoredFact where
       <*> field
       <*> field
 
+instance FromRow StoredAction where
+  fromRow =
+    StoredAction
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
 openFactRepository :: FilePath -> IO (Either StoreError FactRepository)
 openFactRepository path = do
   opened <- try @SQLError $ do
@@ -116,6 +136,9 @@ openFactRepository path = do
           , storeRefreshBatch = storeBatch connection
           , recordRefreshFailure = recordFailure connection
           , loadCanonicalFacts = loadFacts connection
+          , loadCanonicalFactHistory = loadFactHistory connection
+          , persistCorporateActions = saveActions connection
+          , loadCorporateActions = loadActions connection
           , getRefreshState = refreshState connection
           }
 
@@ -336,6 +359,130 @@ loadFacts conn (CompanyId company) period = runDatabase $ do
       ) ::
       IO [StoredFact]
   pure (traverse (decodeStoredFact company) rows)
+
+loadFactHistory :: Connection -> CompanyId -> FactPeriod -> IO (Either StoreError [CanonicalFact])
+loadFactHistory conn (CompanyId company) period = runDatabase $ do
+  rows <-
+    query
+      conn
+      "SELECT f.concept, f.period_start, f.period_end, f.period_type, f.currency, f.amount_minor, f.statement_basis, f.scope, f.policy_version, p.source_id, f.provenance_uri, f.observed_at, f.published_at, f.payload_digest FROM canonical_fact f JOIN raw_payload p ON p.source_id = f.source_id AND p.digest = f.payload_digest WHERE f.company_id = ? AND f.period_start = ? AND f.period_end = ? AND f.period_type = ? ORDER BY f.concept, f.statement_basis, f.scope, p.source_id, julianday(COALESCE(f.published_at, f.observed_at)), f.fact_id"
+      ( company
+      , formatDay (factPeriodStart period)
+      , formatDay (factPeriodEnd period)
+      , periodTypeText (factPeriodType period)
+      ) ::
+      IO [StoredFact]
+  pure (traverse (decodeStoredFact company) rows)
+
+saveActions :: Connection -> [CorporateAction] -> IO (Either StoreError ())
+saveActions conn actions
+  | any invalidAction actions =
+      pure (Left (InvalidRefreshBatch "Corporate action has an empty ID or company ID"))
+  | otherwise = runDatabase $ withTransaction conn $ do
+      forM_ actions $ \action -> do
+        let company = unCompanyId (corporateActionCompany action)
+            provenance = corporateActionProvenance action
+            source = unSourceId (provenanceSource provenance)
+        execute
+          conn
+          "INSERT INTO company(company_id) VALUES (?) ON CONFLICT(company_id) DO NOTHING"
+          (Only company)
+        execute
+          conn
+          "INSERT INTO corporate_action(action_id, company_id, action_type, effective_date, source_id, payload_digest, details) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(action_id) DO NOTHING"
+          ( corporateActionId action
+          , company
+          , actionTypeText (corporateActionType action)
+          , formatDay (corporateActionEffectiveDate action)
+          , source
+          , Text.toLower (provenanceDigest provenance)
+          , actionDetails (corporateActionType action)
+          )
+      pure (Right ())
+  where
+    invalidAction action =
+      Text.null (Text.strip (corporateActionId action))
+        || Text.null (Text.strip (unCompanyId (corporateActionCompany action)))
+
+loadActions :: Connection -> CompanyId -> IO (Either StoreError [CorporateAction])
+loadActions conn (CompanyId company) = runDatabase $ do
+  rows <-
+    query
+      conn
+      "SELECT a.action_id, a.company_id, a.action_type, a.effective_date, a.details, a.source_id, p.uri, p.retrieved_at, p.published_at, a.payload_digest FROM corporate_action a JOIN raw_payload p ON p.source_id = a.source_id AND p.digest = a.payload_digest WHERE a.company_id = ? ORDER BY a.effective_date, a.action_id"
+      (Only company) ::
+      IO [StoredAction]
+  pure (traverse decodeStoredAction rows)
+
+decodeStoredAction :: StoredAction -> Either StoreError CorporateAction
+decodeStoredAction
+  ( StoredAction
+      identifier
+      company
+      actionType
+      effectiveDate
+      details
+      source
+      uri
+      retrieved
+      published
+      digest
+    ) = do
+    day <- parseDay effectiveDate
+    retrievedAt <- parseUtc retrieved
+    publishedAt <- traverse parseUtc published
+    value <- parseActionType actionType details
+    let provenance = Provenance (SourceId source) uri retrievedAt publishedAt digest
+    case mkCorporateAction identifier (CompanyId company) day value provenance of
+      Left errorValue -> Left (InvalidStoredValue (Text.pack (show errorValue)))
+      Right action -> Right action
+
+actionTypeText :: CorporateActionType -> Text
+actionTypeText actionType = case actionType of
+  ShareSplit _ -> "share_split"
+  BonusIssue _ -> "bonus_issue"
+  RightsIssue -> "rights_issue"
+  Merger -> "merger"
+  Demerger -> "demerger"
+  ConsolidationScopeChange -> "consolidation_scope_change"
+  ShareIssuance -> "share_issuance"
+  Buyback -> "buyback"
+
+actionDetails :: CorporateActionType -> Text
+actionDetails actionType = case actionType of
+  ShareSplit ratio -> ratioText ratio
+  BonusIssue ratio -> ratioText ratio
+  _ -> ""
+
+ratioText :: Ratio Integer -> Text
+ratioText ratio = Text.pack (show (numerator ratio)) <> ":" <> Text.pack (show (denominator ratio))
+
+parseActionType :: Text -> Text -> Either StoreError CorporateActionType
+parseActionType actionType details = case actionType of
+  "share_split" -> ShareSplit <$> parseRatio details
+  "bonus_issue" -> BonusIssue <$> parseRatio details
+  "rights_issue" -> Right RightsIssue
+  "merger" -> Right Merger
+  "demerger" -> Right Demerger
+  "consolidation_scope_change" -> Right ConsolidationScopeChange
+  "share_issuance" -> Right ShareIssuance
+  "buyback" -> Right Buyback
+  _ -> Left (InvalidStoredValue ("Invalid corporate action type: " <> actionType))
+
+parseRatio :: Text -> Either StoreError (Ratio Integer)
+parseRatio value = case Text.splitOn ":" value of
+  [rawNumerator, rawDenominator] -> do
+    numeratorValue <- parseInteger rawNumerator
+    denominatorValue <- parseInteger rawDenominator
+    if denominatorValue > 0 && numeratorValue > 0
+      then Right (numeratorValue % denominatorValue)
+      else Left (InvalidStoredValue ("Invalid corporate action ratio: " <> value))
+  _ -> Left (InvalidStoredValue ("Invalid corporate action ratio: " <> value))
+
+parseInteger :: Text -> Either StoreError Integer
+parseInteger value = case reads (Text.unpack value) of
+  [(number, "")] -> Right number
+  _ -> Left (InvalidStoredValue ("Invalid integer: " <> value))
 
 refreshState :: Connection -> CompanyId -> IO (Either StoreError (Maybe RefreshState))
 refreshState conn (CompanyId company) = runDatabase $ do

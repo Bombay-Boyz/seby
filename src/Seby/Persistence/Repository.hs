@@ -7,6 +7,7 @@ module Seby.Persistence.Repository (
   FactRepository (..),
 ) where
 
+import Seby.Analysis.CorporateActions (CorporateAction)
 import Seby.Domain.Types (CompanyId)
 import Seby.Persistence.Types
 
@@ -15,5 +16,8 @@ data FactRepository = FactRepository
   , storeRefreshBatch :: RefreshBatch -> IO (Either StoreError ())
   , recordRefreshFailure :: RefreshFailure -> IO (Either StoreError ())
   , loadCanonicalFacts :: CompanyId -> FactPeriod -> IO (Either StoreError [CanonicalFact])
+  , loadCanonicalFactHistory :: CompanyId -> FactPeriod -> IO (Either StoreError [CanonicalFact])
+  , persistCorporateActions :: [CorporateAction] -> IO (Either StoreError ())
+  , loadCorporateActions :: CompanyId -> IO (Either StoreError [CorporateAction])
   , getRefreshState :: CompanyId -> IO (Either StoreError (Maybe RefreshState))
   }

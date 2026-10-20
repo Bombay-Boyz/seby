@@ -27,6 +27,7 @@ import Seby.Reporting.Model (
   reportDate,
   reportIssues,
   reportMetrics,
+  reportPhase6Notes,
  )
 
 -- | Render the canonical report without recalculating any financial value.
@@ -41,6 +42,7 @@ renderTerminal report =
       , "Metrics"
       ]
         <> fmap renderMetric (reportMetrics report)
+        <> phase6Lines (reportPhase6Notes report)
         <> issueLines (reportIssues report)
     )
   where
@@ -58,6 +60,10 @@ renderMetric metric =
     <> "; source: "
     <> observationSources metric
     <> ")"
+
+phase6Lines :: [Text] -> [Text]
+phase6Lines [] = []
+phase6Lines notes = "" : "Corporate actions, segments, and review signals" : fmap ("  - " <>) notes
 
 issueLines :: [DataIssue] -> [Text]
 issueLines [] = []

@@ -41,6 +41,10 @@ library
         Seby.Metrics
         Seby.Analysis.Peers
         Seby.Analysis.Valuation
+        Seby.Analysis.CorporateActions
+        Seby.Analysis.Segments
+        Seby.Analysis.Forensics
+        Seby.Analysis.FactViews
         Seby.Market.Prices
         Seby.Ingestion.AlphaVantage
         Seby.CLI
@@ -95,6 +99,7 @@ test-suite seby-test
         Seby.AlphaVantageSpec
         Seby.PeersSpec
         Seby.ValuationSpec
+        Seby.Phase6Spec
     build-depends:
         base >= 4.18 && < 5,
         QuickCheck >= 2.14 && < 2.20,
