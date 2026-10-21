@@ -39,6 +39,7 @@ locked in `cabal.project.freeze`.
 ```sh
 cabal build all --enable-tests
 cabal test all --test-show-details=direct
+cabal bench seby-baseline --enable-benchmarks
 fourmolu --mode check $(rg --files -g '*.hs')
 hlint src app test
 cabal check
@@ -49,6 +50,17 @@ specification](seby-engineering-spec.md), and [the Haskell engineering
 standard](haskell-engineering-standard.md) before extending the system.
 
 ## Local workflow
+
+### Performance baseline
+
+Run the synthetic report and SQLite baseline with `cabal bench seby-baseline
+--enable-benchmarks`. It covers a 600-fact report, 200 reports covering 24,000
+facts, repeated identical SQLite refreshes, a 4 MiB raw payload write, and first
+and warm SQLite analyses over 100 annual periods. Fixture setup is excluded,
+and reports are fully rendered. Results are machine-specific; the baseline
+records database size and request count, but does not measure memory or live
+provider latency. See [`benchmarks/BASELINE.md`](benchmarks/BASELINE.md) for the
+recorded run and limitations.
 
 The local SQLite database defaults to `seby.sqlite` in the current directory.
 Manage a ticker watchlist and maintain the database with:

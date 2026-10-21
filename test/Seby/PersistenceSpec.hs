@@ -13,6 +13,7 @@ import Data.Time.Clock (addUTCTime)
 import Database.SQLite.Simple (Only (..), close, execute, execute_, open, query, query_)
 import Seby.Analysis.CorporateActions (CorporateActionType (..), mkCorporateAction)
 import Seby.Analysis.FactViews (FactView (..), selectFactView)
+import Seby.Analysis.ReportBuilder (buildCompanyReport)
 import Seby.Domain.Money (Currency (..))
 import Seby.Domain.Types (
   CompanyId (..),
@@ -25,6 +26,7 @@ import Seby.Domain.Types (
 import Seby.Persistence.Repository
 import Seby.Persistence.SQLite
 import Seby.Persistence.Types
+import Seby.Reporting.Terminal (renderTerminal)
 import System.Directory (doesFileExist, getTemporaryDirectory, removeFile)
 import System.IO (hClose, openTempFile)
 
@@ -34,6 +36,7 @@ runTests = do
   testCacheDecisionTable
   withFreshDatabase testFutureSchemaRejected
   withFreshDatabase testV1ToV2Migration
+  withFreshDatabase testOfflineReportReproduction
   withFreshDatabase testRepositoryRoundTrip
   withFreshDatabase testWatchlistStress
   putStrLn "✓ Phase 2 persistence integration and boundary tests passed."
@@ -121,6 +124,46 @@ testV1ToV2Migration path = do
   assertEqual "v1 data model migrates to v2" [Symbol "INFY"]
     =<< (loadWatchlist repository >>= expectRight "load migrated watchlist")
   closeFactRepository repository
+
+testOfflineReportReproduction :: FilePath -> IO ()
+testOfflineReportReproduction path = do
+  repository <- openFactRepository path >>= expectRight "open repository for offline reproduction"
+  let company = CompanyId "company-1"
+      ticker = Symbol "TCS"
+      batch = makeBatch "offline-replay" "offline reproducibility fixture" 1250000 (timestamp 2025 4 1)
+      reportDate = fromGregorian 2026 10 21
+  expectedReport <-
+    expectRight
+      "build report from the original validated fixture"
+      ( buildCompanyReport
+          reportDate
+          company
+          ticker
+          "Test Company"
+          Consolidated
+          "group"
+          (refreshCanonicalFacts batch)
+      )
+  storeRefreshBatch repository batch >>= expectRight "persist fixture for offline replay"
+  closeFactRepository repository
+
+  reopened <- openFactRepository path >>= expectRight "reopen repository without network access"
+  facts <- loadCurrentCompanyFacts reopened company >>= expectRight "read cached facts offline"
+  name <- loadCompanyName reopened company >>= expectRight "read cached company identity offline"
+  assertEqual "offline replay retains company identity" (Just "Test Company") name
+  actualReport <-
+    expectRight
+      "rebuild report from reopened SQLite facts"
+      (buildCompanyReport reportDate company ticker "Test Company" Consolidated "group" facts)
+  assertEqual
+    "offline re-analysis after database reopen reproduces the complete report"
+    (renderTerminal expectedReport)
+    (renderTerminal actualReport)
+  assertEqual
+    "offline replay retains source payload digest"
+    [provenanceDigest (rawPayloadProvenance (refreshPayload batch))]
+    (map (provenanceDigest . canonicalProvenance) facts)
+  closeFactRepository reopened
 
 testWatchlistStress :: FilePath -> IO ()
 testWatchlistStress path = do
