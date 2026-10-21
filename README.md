@@ -147,3 +147,38 @@ network requests. The freshness window defaults to 24 hours.
 
 The importer validates the entire document before writing anything. Failed
 imports and incomplete analyses exit nonzero with an error on stderr.
+
+### Portfolio snapshots
+
+`seby portfolio analyse FILE` reads a local JSON snapshot and prints a Markdown
+holdings report. Each holding needs `symbol`, `quantity`, `average_cost`,
+`market_price`, `currency`, and `price_date`; the document also needs a `source`
+and `retrieved_at`, with an optional HTTPS `source_url`. Quantities and prices
+are parsed as exact JSON decimals; per-share prices support up to two decimal
+places, and snapshots are limited to 8 MiB. The report includes cost basis,
+market value, unrealized gain, return on cost, per-currency portfolio weight,
+price date, source, retrieval time, and SHA-256 digest of the input snapshot.
+Totals and weights are separated by currency; no FX rates,
+fees, taxes, dividends, or corporate-action adjustments are inferred.
+
+```json
+{
+  "source": "broker-export",
+  "source_url": "https://broker.example/export",
+  "retrieved_at": "2026-10-21T09:30:00Z",
+  "positions": [
+    {
+      "symbol": "TCS",
+      "quantity": 10,
+      "average_cost": 3200.00,
+      "market_price": 3450.50,
+      "currency": "INR",
+      "price_date": "2026-10-20"
+    }
+  ]
+}
+```
+
+```sh
+seby portfolio analyse portfolio.json
+```

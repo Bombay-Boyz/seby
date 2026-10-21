@@ -997,6 +997,17 @@ No event should be applied to historical data without an explicit rule, source, 
 
 Do not start Phase 7 before the core calculations, provenance, and source reconciliation are trustworthy.
 
+### Phase 8 — Portfolio snapshots and reporting
+
+**Deliverables**
+- Offline analysis of user-supplied holdings with dated, sourced market prices.
+- Exact quantity and monetary validation, with positions and totals grouped by currency.
+- Cost basis, market value, unrealized gain, return on cost, and within-currency weights.
+- Markdown output that retains the snapshot digest, source citation, retrieval time, and price date.
+- Offline tests for arithmetic, mixed currencies, provenance, malformed inputs, and invalid positions.
+
+This initial portfolio workflow MUST NOT infer foreign-exchange rates, taxes, fees, dividends, or corporate-action adjustments. It MUST NOT fetch live prices implicitly. A later extension requires a separately justified source and explicit adjustment policies.
+
 ---
 
 ## 14. Rigorous testing strategy

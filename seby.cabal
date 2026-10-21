@@ -46,16 +46,19 @@ library
         Seby.Analysis.Forensics
         Seby.Analysis.FactViews
         Seby.Analysis.ReportBuilder
+        Seby.Analysis.Portfolio
         Seby.Market.Prices
         Seby.Ingestion.AlphaVantage
         Seby.Ingestion.LocalStatements
         Seby.Ingestion.FundamentalProviders
+        Seby.Ingestion.Portfolio
         Seby.CLI
         Seby.App
         Seby.Reporting.Model
         Seby.Reporting.Format
         Seby.Reporting.Terminal
         Seby.Reporting.Markdown
+        Seby.Reporting.PortfolioMarkdown
         Seby.Persistence.Repository
         Seby.Persistence.SQLite
         Seby.Persistence.Types
@@ -106,6 +109,7 @@ test-suite seby-test
         Seby.Phase6Spec
         Seby.Phase7Spec
         Seby.FmpSpec
+        Seby.PortfolioSpec
     build-depends:
         base >= 4.18 && < 5,
         QuickCheck >= 2.14 && < 2.20,

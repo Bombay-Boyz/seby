@@ -94,6 +94,20 @@ commandParser =
               (progDesc "Manage a local ticker watchlist")
           )
         <> command
+          "portfolio"
+          ( info
+              ( subparser
+                  ( command
+                      "analyse"
+                      ( info
+                          (AnalysePortfolio <$> strArgument (metavar "FILE" <> help "Sourced local portfolio snapshot JSON"))
+                          (progDesc "Analyse supplied holdings and dated prices without network access")
+                      )
+                  )
+              )
+              (progDesc "Analyse a local portfolio snapshot")
+          )
+        <> command
           "db"
           ( info
               ( subparser

@@ -15,6 +15,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TIO
 import Data.Time (NominalDiffTime, getCurrentTime, utctDay)
+import Seby.Analysis.Portfolio (summarizePortfolio)
 import Seby.Analysis.ReportBuilder (buildCompanyReport)
 import Seby.Domain.Types (CompanyId (..), SourceId (..), StatementBasis (..), Symbol (..))
 import Seby.Ingestion.FundamentalProviders (
@@ -23,6 +24,7 @@ import Seby.Ingestion.FundamentalProviders (
   fetchFmpStatements,
  )
 import Seby.Ingestion.LocalStatements (decodeStatementImport)
+import Seby.Ingestion.Portfolio (decodePortfolioSnapshot)
 import Seby.Persistence.Repository (FactRepository (..))
 import Seby.Persistence.SQLite (openFactRepository)
 import Seby.Persistence.Types (
@@ -36,6 +38,7 @@ import Seby.Persistence.Types (
   decideCache,
  )
 import Seby.Reporting.Model (Report)
+import Seby.Reporting.PortfolioMarkdown (renderPortfolioMarkdown)
 import Seby.Reporting.Terminal (renderTerminal)
 import System.Environment (lookupEnv)
 import System.Exit (die, exitFailure)
@@ -46,6 +49,7 @@ data Command
   = AnalyseCompany !Symbol !StatementBasis !Text
   | AnalyseWatchlist !StatementBasis !Text
   | ImportStatements !FilePath
+  | AnalysePortfolio !FilePath
   | RefreshStatements !Symbol ![(Text, Symbol)] !CacheMode !NominalDiffTime
   | InvalidAnalysisRequest !Text
   | WatchlistAdd !Symbol
@@ -103,6 +107,19 @@ runCommand cmd = case cmd of
           <> unCompanyId (refreshCompany batch)
           <> "."
       )
+  AnalysePortfolio path -> do
+    input <- try @IOException (ByteString.readFile path)
+    payload <- case input of
+      Left exception -> failText ("Cannot read portfolio snapshot: " <> Text.pack (show exception))
+      Right bytes -> pure bytes
+    positions <-
+      either (failText . ("Invalid portfolio snapshot: " <>)) pure (decodePortfolioSnapshot payload)
+    summaries <-
+      either
+        (failText . ("Cannot summarize portfolio: " <>) . Text.pack . show)
+        pure
+        (summarizePortfolio positions)
+    TIO.putStr (renderPortfolioMarkdown summaries)
   RefreshStatements symbol sources mode maxAge -> withRepository $ \repository ->
     runRefresh repository symbol sources mode maxAge
   InvalidAnalysisRequest reason -> failText reason
