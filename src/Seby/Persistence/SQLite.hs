@@ -150,6 +150,7 @@ openFactRepository path = do
           , vacuumDatabase = vacuum connection
           , backupDatabase = backup connection path
           , getRefreshState = refreshState connection
+          , getSourceRefreshState = refreshStateForSource connection
           }
 
 configureConnection :: Connection -> IO ()
@@ -575,11 +576,20 @@ parseInteger value = case reads (Text.unpack value) of
 
 refreshState :: Connection -> CompanyId -> IO (Either StoreError (Maybe RefreshState))
 refreshState conn (CompanyId company) = runDatabase $ do
+  readRefreshState conn company Nothing
+
+refreshStateForSource ::
+  Connection -> CompanyId -> SourceId -> IO (Either StoreError (Maybe RefreshState))
+refreshStateForSource conn (CompanyId company) (SourceId source) = runDatabase $ do
+  readRefreshState conn company (Just source)
+
+readRefreshState :: Connection -> Text -> Maybe Text -> IO (Either StoreError (Maybe RefreshState))
+readRefreshState conn company maybeSource = do
   rows <-
     query
       conn
-      "SELECT latest.attempted_at, (SELECT completed_at FROM refresh_run WHERE company_id = ? AND status = 'succeeded' ORDER BY julianday(completed_at) DESC, run_id DESC LIMIT 1), latest.error FROM (SELECT attempted_at, error FROM refresh_run WHERE company_id = ? ORDER BY julianday(attempted_at) DESC, run_id DESC LIMIT 1) latest"
-      (company, company) ::
+      "SELECT latest.attempted_at, (SELECT completed_at FROM refresh_run WHERE company_id = ? AND status = 'succeeded' AND (? IS NULL OR source_id = ?) ORDER BY julianday(completed_at) DESC, run_id DESC LIMIT 1), latest.error FROM (SELECT attempted_at, error FROM refresh_run WHERE company_id = ? AND (? IS NULL OR source_id = ?) ORDER BY julianday(attempted_at) DESC, run_id DESC LIMIT 1) latest"
+      (company, maybeSource, maybeSource, company, maybeSource, maybeSource) ::
       IO [(Text, Maybe Text, Maybe Text)]
   pure $ case rows of
     [] -> Right Nothing

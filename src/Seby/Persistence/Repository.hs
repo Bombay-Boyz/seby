@@ -9,7 +9,7 @@ module Seby.Persistence.Repository (
 
 import Data.Text (Text)
 import Seby.Analysis.CorporateActions (CorporateAction)
-import Seby.Domain.Types (CompanyId, Symbol)
+import Seby.Domain.Types (CompanyId, SourceId, Symbol)
 import Seby.Persistence.Types
 
 data FactRepository = FactRepository
@@ -29,4 +29,5 @@ data FactRepository = FactRepository
   , vacuumDatabase :: IO (Either StoreError ())
   , backupDatabase :: FilePath -> IO (Either StoreError ())
   , getRefreshState :: CompanyId -> IO (Either StoreError (Maybe RefreshState))
+  , getSourceRefreshState :: CompanyId -> SourceId -> IO (Either StoreError (Maybe RefreshState))
   }

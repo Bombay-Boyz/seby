@@ -14,9 +14,9 @@ import Data.ByteString qualified as ByteString
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TIO
-import Data.Time (getCurrentTime, utctDay)
+import Data.Time (NominalDiffTime, getCurrentTime, utctDay)
 import Seby.Analysis.ReportBuilder (buildCompanyReport)
-import Seby.Domain.Types (CompanyId (..), StatementBasis, Symbol (..))
+import Seby.Domain.Types (CompanyId (..), SourceId (..), StatementBasis (..), Symbol (..))
 import Seby.Ingestion.FundamentalProviders (
   FmpError (..),
   fetchAlphaVantageStatements,
@@ -25,7 +25,16 @@ import Seby.Ingestion.FundamentalProviders (
 import Seby.Ingestion.LocalStatements (decodeStatementImport)
 import Seby.Persistence.Repository (FactRepository (..))
 import Seby.Persistence.SQLite (openFactRepository)
-import Seby.Persistence.Types (RefreshBatch (..), StoreError)
+import Seby.Persistence.Types (
+  CacheDecision (..),
+  CacheMode (..),
+  CacheStatus (..),
+  RefreshBatch (..),
+  RefreshState (..),
+  StoreError,
+  cacheStatusAt,
+  decideCache,
+ )
 import Seby.Reporting.Model (Report)
 import Seby.Reporting.Terminal (renderTerminal)
 import System.Environment (lookupEnv)
@@ -37,7 +46,7 @@ data Command
   = AnalyseCompany !Symbol !StatementBasis !Text
   | AnalyseWatchlist !StatementBasis !Text
   | ImportStatements !FilePath
-  | RefreshStatements !Symbol ![(Text, Symbol)]
+  | RefreshStatements !Symbol ![(Text, Symbol)] !CacheMode !NominalDiffTime
   | InvalidAnalysisRequest !Text
   | WatchlistAdd !Symbol
   | WatchlistRemove !Symbol
@@ -94,24 +103,8 @@ runCommand cmd = case cmd of
           <> unCompanyId (refreshCompany batch)
           <> "."
       )
-  RefreshStatements symbol sources -> withRepository $ \repository -> do
-    (providerName, batch, failedAttempts) <- fetchFromSources symbol sources []
-    storeRefreshBatch repository batch >>= reportStoreResult
-    TIO.putStrLn
-      ( "Imported "
-          <> Text.pack (show (length (refreshCanonicalFacts batch)))
-          <> " "
-          <> Text.toUpper providerName
-          <> " sourced facts for "
-          <> unCompanyId (refreshCompany batch)
-          <> "."
-      )
-    TIO.putStrLn
-      ( "Basis note: "
-          <> Text.toUpper providerName
-          <> " statement endpoints do not reliably label standalone versus consolidated; Seby records this data as consolidated by explicit adapter policy. Verify before relying on the basis."
-      )
-    mapM_ (TIO.putStrLn . ("Source attempt failed; continuing: " <>)) failedAttempts
+  RefreshStatements symbol sources mode maxAge -> withRepository $ \repository ->
+    runRefresh repository symbol sources mode maxAge
   InvalidAnalysisRequest reason -> failText reason
   WatchlistAdd symbol -> withRepository $ \repository -> do
     addWatchlistSymbol repository symbol >>= reportStoreResult
@@ -153,29 +146,102 @@ failStore = die . Text.unpack . Text.pack . show
 failText :: Text -> IO a
 failText = die . Text.unpack
 
-fetchFromSources :: Symbol -> [(Text, Symbol)] -> [Text] -> IO (Text, RefreshBatch, [Text])
-fetchFromSources _ [] errors = failText ("All selected statement sources failed. " <> Text.intercalate "; " (reverse errors))
+runRefresh :: FactRepository -> Symbol -> [(Text, Symbol)] -> CacheMode -> NominalDiffTime -> IO ()
+runRefresh repository symbol sources mode maxAge = case mode of
+  OfflineOnly -> do
+    report <- loadReport repository symbol Consolidated "group"
+    case report of
+      Left reason -> failText ("Offline data unavailable: " <> reason)
+      Right value -> do
+        TIO.putStrLn "Offline mode: using saved facts; no provider was contacted."
+        TIO.putStr (renderTerminal value)
+  PreferCache -> case sources of
+    [] -> failText "--mode prefer-cache requires at least one --source."
+    (providerName, _) : _ -> do
+      let company = CompanyId (unSymbol symbol)
+          sourceId = sourceIdFor providerName
+      state <- getSourceRefreshState repository company sourceId >>= either failStore pure
+      now <- getCurrentTime
+      let status = cacheStatusAt now maxAge (state >>= lastSuccessfulAt)
+      case state >>= lastFailureReason of
+        Just reason -> TIO.hPutStrLn stderr ("Last provider refresh failed: " <> reason)
+        Nothing -> pure ()
+      case decideCache PreferCache status of
+        UseCachedData -> do
+          TIO.putStrLn ("Using fresh cached facts from " <> Text.toUpper providerName <> ".")
+          report <- loadReport repository symbol Consolidated "group"
+          either
+            (failText . ("Cached facts could not produce a report: " <>))
+            (TIO.putStr . renderTerminal)
+            report
+        RefreshThenAllowCachedFallback -> do
+          case status of
+            CacheStale at ->
+              TIO.hPutStrLn stderr ("Cached facts are stale; last successful refresh: " <> Text.pack (show at))
+            _ -> pure ()
+          outcome <- fetchFromSources symbol sources []
+          case outcome of
+            Right fetched -> persistFetched repository fetched
+            Left refreshError -> do
+              report <- loadReport repository symbol Consolidated "group"
+              case report of
+                Left _ -> failText refreshError
+                Right value -> do
+                  TIO.hPutStrLn stderr ("Refresh failed; using saved facts: " <> refreshError)
+                  TIO.putStr (renderTerminal value)
+        _ -> failText "Unexpected cache policy decision."
+  RefreshRequired -> do
+    outcome <- fetchFromSources symbol sources []
+    either failText (persistFetched repository) outcome
+
+persistFetched :: FactRepository -> (Text, RefreshBatch, [Text]) -> IO ()
+persistFetched repository (providerName, batch, failedAttempts) = do
+  storeRefreshBatch repository batch >>= reportStoreResult
+  TIO.putStrLn
+    ( "Imported "
+        <> Text.pack (show (length (refreshCanonicalFacts batch)))
+        <> " "
+        <> Text.toUpper providerName
+        <> " sourced facts for "
+        <> unCompanyId (refreshCompany batch)
+        <> "."
+    )
+  TIO.putStrLn
+    ( "Basis note: "
+        <> Text.toUpper providerName
+        <> " statement endpoints do not reliably label standalone versus consolidated; Seby records this data as consolidated by explicit adapter policy. Verify before relying on the basis."
+    )
+  mapM_ (TIO.putStrLn . ("Source attempt failed; continuing: " <>)) failedAttempts
+
+sourceIdFor :: Text -> SourceId
+sourceIdFor name = case Text.toLower name of
+  "fmp" -> SourceId "FINANCIAL_MODELING_PREP"
+  "alpha-vantage" -> SourceId "ALPHA_VANTAGE"
+  _ -> SourceId (Text.toUpper name)
+
+fetchFromSources ::
+  Symbol -> [(Text, Symbol)] -> [Text] -> IO (Either Text (Text, RefreshBatch, [Text]))
+fetchFromSources _ [] errors = pure (Left ("All selected statement sources failed. " <> Text.intercalate "; " (reverse errors)))
 fetchFromSources company ((providerName, providerSymbol) : remaining) errors = do
   let normalizedProvider = Text.toLower providerName
-  (keyVariable, fetcher) <- case normalizedProvider of
-    "fmp" -> pure ("SEBY_FMP_API_KEY", fetchFmpStatements)
-    "alpha-vantage" -> pure ("SEBY_ALPHA_VANTAGE_API_KEY", fetchAlphaVantageStatements)
-    _ -> failText ("Unsupported statement provider in source order: " <> providerName)
-  keyResult <- lookupEnv keyVariable
-  case keyResult of
-    Nothing -> attemptFailure (Text.pack keyVariable <> " is not set")
-    Just key -> do
-      fetched <- fetcher (Text.pack key) company providerSymbol
-      case fetched of
-        Left failure ->
-          attemptFailure (providerName <> " (" <> unSymbol providerSymbol <> "): " <> fmpErrorText failure)
-        Right batch -> pure (normalizedProvider, batch, reverse errors)
+      fetcher = case normalizedProvider of
+        "fmp" -> Right ("SEBY_FMP_API_KEY", fetchFmpStatements)
+        "alpha-vantage" -> Right ("SEBY_ALPHA_VANTAGE_API_KEY", fetchAlphaVantageStatements)
+        _ -> Left ("Unsupported statement provider in source order: " <> providerName)
+  case fetcher of
+    Left reason -> pure (Left reason)
+    Right (keyVariable, fetch) -> do
+      keyResult <- lookupEnv keyVariable
+      case keyResult of
+        Nothing -> attemptFailure (Text.pack keyVariable <> " is not set")
+        Just key -> do
+          fetched <- fetch (Text.pack key) company providerSymbol
+          case fetched of
+            Left failure ->
+              attemptFailure (providerName <> " (" <> unSymbol providerSymbol <> "): " <> fmpErrorText failure)
+            Right batch -> pure (Right (normalizedProvider, batch, reverse errors))
   where
-    attemptFailure message = case remaining of
-      [] ->
-        failText
-          ("All selected statement sources failed. " <> Text.intercalate "; " (reverse (message : errors)))
-      _ -> fetchFromSources company remaining (message : errors)
+    attemptFailure message = fetchFromSources company remaining (message : errors)
 
 fmpErrorText :: FmpError -> Text
 fmpErrorText failure = case failure of

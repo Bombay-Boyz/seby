@@ -11,6 +11,7 @@ import Data.Text qualified as T
 import Options.Applicative
 import Seby.App (Command (..), runCommand)
 import Seby.Domain.Types (StatementBasis (..), Symbol (..))
+import Seby.Persistence.Types (CacheMode (..))
 
 -- | Main entry point for CLI execution.
 runCLI :: IO ()
@@ -44,18 +45,34 @@ commandParser =
                       <> command
                         "refresh"
                         ( info
-                            ( RefreshStatements
-                                <$> symbolArgument
-                                <*> some
-                                  ( option
-                                      (eitherReader parseSource)
-                                      ( long "source"
-                                          <> metavar "PROVIDER:SYMBOL"
-                                          <> help "Ordered source, repeat for fallback; e.g. fmp:TCS.NS or alpha-vantage:TCS.BSE"
-                                      )
-                                  )
+                            ( ( makeRefresh
+                                  <$> symbolArgument
+                                  <*> many
+                                    ( option
+                                        (eitherReader parseSource)
+                                        ( long "source"
+                                            <> metavar "PROVIDER:SYMBOL"
+                                            <> help "Ordered source, repeat for fallback; e.g. fmp:TCS.NS or alpha-vantage:TCS.BSE"
+                                        )
+                                    )
+                                  <*> option
+                                    (eitherReader parseCacheMode)
+                                    ( long "mode"
+                                        <> value RefreshRequired
+                                        <> metavar "MODE"
+                                        <> help "prefer-cache, refresh, or offline (default: refresh)"
+                                    )
+                                  <*> option
+                                    (eitherReader positiveHours)
+                                    ( long "max-age-hours"
+                                        <> value 24
+                                        <> metavar "HOURS"
+                                        <> help "Freshness window for --mode prefer-cache (default: 24)"
+                                    )
+                              )
+                                <**> helper
                             )
-                            (progDesc "Refresh financial statements from an explicitly selected provider")
+                            (progDesc "Refresh financial statements or use locally cached facts")
                         )
                   )
               )
@@ -126,3 +143,15 @@ commandParser =
         | map toUpper providerName `elem` ["FMP", "ALPHA-VANTAGE"] && not (null providerSymbol) ->
             Right (T.pack providerName, Symbol (T.toUpper (T.pack providerSymbol)))
       _ -> Left "source must be PROVIDER:SYMBOL, with provider fmp or alpha-vantage"
+    parseCacheMode mode = case map toUpper mode of
+      "PREFER-CACHE" -> Right PreferCache
+      "REFRESH" -> Right RefreshRequired
+      "OFFLINE" -> Right OfflineOnly
+      _ -> Left "mode must be prefer-cache, refresh, or offline"
+    positiveHours raw = case reads raw :: [(Int, String)] of
+      [(hours, "")] | hours > 0 -> Right hours
+      _ -> Left "max-age-hours must be a positive integer"
+    makeRefresh symbol sources mode hours
+      | mode /= OfflineOnly && null sources =
+          InvalidAnalysisRequest "provide at least one --source unless --mode offline is selected"
+      | otherwise = RefreshStatements symbol sources mode (fromIntegral hours * 3600)

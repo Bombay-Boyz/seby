@@ -114,6 +114,8 @@ read from the process environment and never stored or printed. For example:
 
 ```sh
 seby facts refresh TCS --source fmp:TCS.NS --source alpha-vantage:TCS.BSE
+seby facts refresh TCS --source fmp:TCS.NS --mode prefer-cache --max-age-hours 24
+seby facts refresh TCS --mode offline
 seby analyse TCS --basis consolidated --scope group
 ```
 
@@ -125,6 +127,11 @@ must be confirmed by the provider. Both adapters retain the original payload;
 their standard endpoints do not reliably label standalone versus consolidated,
 so refresh records the basis assumption and prints a warning. Verify the basis
 before relying on it. The refresh command never stores or prints an API key.
+Refresh modes are explicit: `refresh` always calls the selected provider
+sequence, `prefer-cache` reuses that primary provider's successful response
+when it is within the configured age and falls back to saved facts if a
+refresh fails, and `offline` produces a report from local facts without making
+network requests. The freshness window defaults to 24 hours.
 
 The importer validates the entire document before writing anything. Failed
 imports and incomplete analyses exit nonzero with an error on stderr.
