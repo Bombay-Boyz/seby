@@ -44,6 +44,7 @@ data Command
   | WatchlistList
   | DatabaseCheck
   | DatabaseVacuum
+  | DatabaseBackup !FilePath
   | PrintVersion
   deriving stock (Eq, Show)
 
@@ -128,6 +129,9 @@ runCommand cmd = case cmd of
   DatabaseVacuum -> withRepository $ \repository -> do
     vacuumDatabase repository >>= reportStoreResult
     TIO.putStrLn "SQLite database vacuum completed."
+  DatabaseBackup path -> withRepository $ \repository -> do
+    backupDatabase repository path >>= reportStoreResult
+    TIO.putStrLn ("SQLite database backup written to " <> Text.pack path <> ".")
   PrintVersion -> do
     TIO.putStrLn "seby 0.1.0.0 — Indian Equities Fundamental Analysis System (Haskell GHC 9.14)"
 

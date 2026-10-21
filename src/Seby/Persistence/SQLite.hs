@@ -148,6 +148,7 @@ openFactRepository path = do
           , loadWatchlist = loadWatchlistSymbols connection
           , checkDatabaseIntegrity = checkIntegrity connection
           , vacuumDatabase = vacuum connection
+          , backupDatabase = backup connection path
           , getRefreshState = refreshState connection
           }
 
@@ -404,6 +405,18 @@ vacuum :: Connection -> IO (Either StoreError ())
 vacuum conn = runDatabase $ do
   execute_ conn "VACUUM"
   pure (Right ())
+
+{- | Create a consistent SQLite snapshot, including committed WAL contents.
+VACUUM INTO refuses to overwrite an existing destination.
+-}
+backup :: Connection -> FilePath -> FilePath -> IO (Either StoreError ())
+backup conn sourcePath destinationPath
+  | null destinationPath = pure (Left (DatabaseFailure "Backup path must not be empty"))
+  | destinationPath == sourcePath =
+      pure (Left (DatabaseFailure "Backup path must differ from the database path"))
+  | otherwise = runDatabase $ do
+      execute conn "VACUUM INTO ?" (Only destinationPath)
+      pure (Right ())
 
 loadFacts :: Connection -> CompanyId -> FactPeriod -> IO (Either StoreError [CanonicalFact])
 loadFacts conn (CompanyId company) period = runDatabase $ do

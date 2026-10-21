@@ -59,11 +59,13 @@ seby watchlist list
 seby watchlist remove TCS
 seby db check
 seby db vacuum
+seby db backup seby-backup.sqlite
 ```
 
 Watchlist tickers are normalized to uppercase and duplicate additions are
 idempotent. `db check` runs SQLite's integrity check; `db vacuum` reclaims
-unused database pages. Batch analysis uses the saved watchlist, prints every
+unused database pages. `db backup FILE` creates a consistent SQLite snapshot
+that includes committed WAL data; the destination must not already exist. Batch analysis uses the saved watchlist, prints every
 successful report, and exits unsuccessfully if any ticker has no usable data
 or encounters an error.
 

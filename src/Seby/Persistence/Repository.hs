@@ -27,5 +27,6 @@ data FactRepository = FactRepository
   , loadWatchlist :: IO (Either StoreError [Symbol])
   , checkDatabaseIntegrity :: IO (Either StoreError ())
   , vacuumDatabase :: IO (Either StoreError ())
+  , backupDatabase :: FilePath -> IO (Either StoreError ())
   , getRefreshState :: CompanyId -> IO (Either StoreError (Maybe RefreshState))
   }

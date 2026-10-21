@@ -82,6 +82,12 @@ commandParser =
               ( subparser
                   ( command "check" (info (pure DatabaseCheck) (progDesc "Run SQLite integrity check"))
                       <> command "vacuum" (info (pure DatabaseVacuum) (progDesc "Reclaim unused SQLite space"))
+                      <> command
+                        "backup"
+                        ( info
+                            (DatabaseBackup <$> strArgument (metavar "FILE" <> help "New backup file path"))
+                            (progDesc "Create a consistent SQLite snapshot, including WAL data")
+                        )
                   )
               )
               (progDesc "Maintain the local database")
